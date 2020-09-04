@@ -1,0 +1,1328 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3",
+      "language": "python"
+    },
+    "language_info": {
+      "name": "python",
+      "version": "3.7.6",
+      "mimetype": "text/x-python",
+      "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+      },
+      "pygments_lexer": "ipython3",
+      "nbconvert_exporter": "python",
+      "file_extension": ".py"
+    },
+    "colab": {
+      "name": "fork-of-bert-easy-clean-and-modeling-for-tweets.ipynb",
+      "provenance": [],
+      "collapsed_sections": []
+    },
+    "accelerator": "TPU"
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "z0n3Jy_H8vsz",
+        "colab_type": "text"
+      },
+      "source": [
+        "# Live Tweets Disaster Analysis with BERT"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "Vpywy44jfMGy",
+        "colab_type": "text"
+      },
+      "source": [
+        "Copyright @ 2020 **ABCOM Information Systems Pvt. Ltd.** All Rights Reserved.\n",
+        "\n",
+        "Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this file except in compliance with the License. You may obtain a copy of the License at\n",
+        "\n",
+        "http://www.apache.org/licenses/LICENSE-2.0\n",
+        "\n",
+        "Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n",
+        "\n",
+        "See the License for the specific language governing permissions and limitations under the License."
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "jEnQq7e1HXjq",
+        "colab_type": "text"
+      },
+      "source": [
+        "## Install transformers\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "gTZET5ftPN9C",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "!pip install transformers"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "RRul_DppvXE1",
+        "colab_type": "text"
+      },
+      "source": [
+        "## Import necessary packages"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "zsVjaD3ePOnj",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "import os\n",
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "import tensorflow as tf\n",
+        "tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)\n",
+        "from tokenizers import BertWordPieceTokenizer\n",
+        "from tqdm.notebook import tqdm\n",
+        "from tensorflow.keras.layers import Dense, Input\n",
+        "from tensorflow.keras.optimizers import Adam\n",
+        "from tensorflow.keras.models import Model\n",
+        "from tensorflow.keras.callbacks import ModelCheckpoint\n",
+        "from tensorflow.keras import backend as K\n",
+        "import transformers\n",
+        "from transformers import TFAutoModel, AutoTokenizer\n",
+        "import matplotlib.pyplot as plt"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "oMTvC0MGvfKZ",
+        "colab_type": "text"
+      },
+      "source": [
+        "## Configure TPU"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "3PYtOlP5POtS",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "try:\n",
+        "    tpu = tf.distribute.cluster_resolver.TPUClusterResolver() \n",
+        "    print('Running on TPU ', tpu.master())\n",
+        "except ValueError:\n",
+        "    tpu = None\n",
+        "\n",
+        "if tpu:\n",
+        "    tf.config.experimental_connect_to_cluster(tpu)\n",
+        "    tf.tpu.experimental.initialize_tpu_system(tpu)\n",
+        "    strategy = tf.distribute.TPUStrategy(tpu)\n",
+        "else:\n",
+        "    strategy = tf.distribute.get_strategy()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "6gn0lzwMvi-d",
+        "colab_type": "text"
+      },
+      "source": [
+        "## Get tweets training data from GitHub \n",
+        "This data was originally posted on Kaggle"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "OSOOm-GDqGjq",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "!wget https://raw.githubusercontent.com/abcom-mltutorials/Live-Tweets-Disaster-Analysis-/master/train.csv?raw=true"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "pQ3JpXsMqG2h",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# load the data with pandas\n",
+        "train=pd.read_csv('/content/train.csv?raw=true')"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "buNoeD74wbYs",
+        "colab_type": "text"
+      },
+      "source": [
+        "The motive is to classify tweets into real disaster(target=1) and no disaster(target=0) with the help of Bert transformer"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "YyWWZEcVQlWQ",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "train.head()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "nFPrhs_J0SMe",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "train.shape"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "AjbLxAnaQGjH",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "train.isnull().sum()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "cIvV4yL6XofF",
+        "colab_type": "text"
+      },
+      "source": [
+        "Checking which keywords are most commonly found in the tweets."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "v-AsOrqwocL6",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# empty list for holding keyword from each row of train['keyword']\n",
+        "keyword_combined=[] \n",
+        "for i in range(len(train)):\n",
+        "  keyword_combined.append(train['keyword'].iloc[i])"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "kEp_bk9XoqiR",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "import collections\n",
+        "# count instances of each keyword\n",
+        "keyword_counters = collections.Counter(keyword_combined) "
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "uJRUyKzRoqep",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        " # make dataframe with words and their corresponding counts\n",
+        " keyword_with_counts = pd.DataFrame(keyword_counters.most_common(15), \n",
+        "                             columns=['keyword', 'count'])"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "zo3yCRVjouQ4",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "fig, ax = plt.subplots(figsize=(8, 8))\n",
+        "\n",
+        "# Plot horizontal bar graph\n",
+        "# plot the frequency distribution after sorting\n",
+        "keyword_with_counts.sort_values(by='count').plot.barh(x='keyword',  \n",
+        "                      y='count',\n",
+        "                      ax=ax,\n",
+        "                      color=\"purple\")\n",
+        "\n",
+        "ax.set_title(\"Common Words Found in Tweets\")\n",
+        "\n",
+        "plt.show()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "1q1WzF1Jv7OD",
+        "colab_type": "text"
+      },
+      "source": [
+        "## Removing unwanted columns"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "OHcn4FxvQGAm",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# dropping id, location, keyword column\n",
+        "train.drop(['id','location','keyword'],axis=1,inplace=True)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "P1nII3kwQSRH",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "train['target'].value_counts()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "D4yRyxN-w6ZM",
+        "colab_type": "text"
+      },
+      "source": [
+        "## Cleaning the data\n",
+        "Install clean-text for cleaning the tweets which might contain urls, numbers etc. which will not be helpful for our model."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "iBNsAmd0WACb",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "!pip install clean-text[gpl]"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "5dg7Z4psWCqG",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "from cleantext import clean"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "4_UdFMngWCng",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "def text_cleaning(text):\n",
+        "    text=clean(text,\n",
+        "      fix_unicode=True,               # fix various unicode errors\n",
+        "      to_ascii=True,                 # transliterate to closest ASCII representation\n",
+        "      lower=True,                    # lowercase text\n",
+        "      no_line_breaks=True,           # fully strip line breaks\n",
+        "      no_urls=True,                  # replace all URLs with ''\n",
+        "      no_emails=True,                # replace all email addresses with ''\n",
+        "      no_phone_numbers=True,         # replace all phone numbers with ''\n",
+        "      no_numbers=True,               # replace all numbers with ''\n",
+        "      no_digits=True,                # replace all digits with ''\n",
+        "      no_currency_symbols=True,      # replace all currency symbols with ''\n",
+        "      no_punct=True,                 # fully remove punctuation\n",
+        "      replace_with_url=\"\",\n",
+        "      replace_with_email=\"\",\n",
+        "      replace_with_phone_number=\"\",\n",
+        "      replace_with_number=\"\",\n",
+        "      replace_with_digit=\"\",\n",
+        "      replace_with_currency_symbol=\"\",\n",
+        "      lang=\"en\"                      # set to 'en' for English\n",
+        "    )\n",
+        "    return text"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "o0VLTinyWHsb",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "for i in range(len(train)):\n",
+        "    train['text'].iloc[i]=text_cleaning(train['text'].iloc[i])"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "7czzZpAB4lxa",
+        "colab_type": "text"
+      },
+      "source": [
+        "Removing stopwords"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "sl9NjHIm2r7k",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "import nltk\n",
+        "from nltk.corpus import stopwords\n",
+        "nltk.download('stopwords')\n",
+        "stoplist = stopwords.words('english')"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "tvAwa_Jn2ruT",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "for i in range(len(train)):\n",
+        "  train['text'].iloc[i] = [word for word in train['text'].iloc[i].split() if word not in stoplist]"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "taGadrFDWHo7",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "train['text']"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "tpzt_RxQQcZw",
+        "colab_type": "text"
+      },
+      "source": [
+        "Let's look at frequency distribution of all unique words."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "0uDHEPtyP8ln",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# empty list for holding words from each row of train['text']\n",
+        "text_combined=[] "
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "tCBbonEBP8rD",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "for i in range(len(train)):\n",
+        "  text_combined.append(train['text'].iloc[i])"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "wTMtCXPpP8VL",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "from itertools import chain\n",
+        "# convert the 2D array of words to 1D\n",
+        "flatten_list_text = list(chain.from_iterable(text_combined)) "
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "-ZBXo7DHP8Nq",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# count instances of each word\n",
+        "import collections\n",
+        "word_counters = collections.Counter(flatten_list_text) "
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "cMIKGEVQQH3t",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# make dataframe with words and their corresponding counts\n",
+        "words_with_counts = pd.DataFrame(word_counters.most_common(15),  \n",
+        "                             columns=['words', 'count'])"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "q9JntBTrQH1c",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "fig, ax = plt.subplots(figsize=(8, 8))\n",
+        "\n",
+        "# Plot horizontal bar graph\n",
+        "# plot the frequency distribution after sorting\n",
+        "words_with_counts.sort_values(by='count').plot.barh(x='words',  \n",
+        "                      y='count',\n",
+        "                      ax=ax,\n",
+        "                      color=\"purple\")\n",
+        "\n",
+        "ax.set_title(\"Common Words Found in Tweets\")\n",
+        "\n",
+        "plt.show()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "RWzl2t7OxWLl",
+        "colab_type": "text"
+      },
+      "source": [
+        "## Modeling"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "I71LptyrPO1_",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "def build_model(transformer, max_len=512): \n",
+        "    input_word_ids = Input(shape=(max_len,), dtype=tf.int32, name=\"input_word_ids\")\n",
+        "    sequence_output = transformer(input_word_ids)[0]\n",
+        "    cls_token = sequence_output[:, 0, :]\n",
+        "    x = tf.keras.layers.Dropout(0.35)(cls_token)\n",
+        "\n",
+        "    # make output dense layer \n",
+        "    out = Dense(1, activation='sigmoid')(x)\n",
+        "    \n",
+        "    model = Model(inputs=input_word_ids, outputs=out)\n",
+        "    model.compile(Adam(lr=3e-5), loss='binary_crossentropy', \n",
+        "                  metrics=[tf.keras.metrics.AUC()])\n",
+        "    \n",
+        "    return model"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "CsfdKdJQPOzM",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# take bert layer using transformers.TFBertModel and add it in model.\n",
+        "with strategy.scope():\n",
+        "    transformer_layer = transformers.TFBertModel.from_pretrained('bert-base-uncased')\n",
+        "    model = build_model(transformer_layer, max_len=512)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "skoy3BHkBjNV",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "model.summary()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "7NXlZ3jTYRAO",
+        "colab_type": "text"
+      },
+      "source": [
+        "# Tokenizing"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "hKvjXIS2POvz",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "import transformers\n",
+        "tokenizer = transformers.BertTokenizer.from_pretrained('bert-base-uncased')"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "mWkEUAx5POr4",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "save_path = 'distilbert_base_uncased/'\n",
+        "if not os.path.exists(save_path):\n",
+        "    os.makedirs(save_path)\n",
+        "tokenizer.save_pretrained(save_path)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "trusted": true,
+        "id": "BM16Oox2jon6",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "from tokenizers import BertWordPieceTokenizer\n",
+        "fast_tokenizer = BertWordPieceTokenizer('distilbert_base_uncased/vocab.txt', lowercase=True)\n",
+        "fast_tokenizer"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "kIni9eqdS0_5",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "def fast_encode(texts, tokenizer, size=256, maxlen=512):\n",
+        "    tokenizer.enable_truncation(max_length=maxlen)  # truncate the text and limit it to maxlen\n",
+        "    tokenizer.enable_padding(length=maxlen)         # pad sentences shorter than maxlen\n",
+        "    ids_full = []\n",
+        "    \n",
+        "    for i in tqdm(range(0, len(texts), size)):\n",
+        "        text = texts[i:i+size].tolist()\n",
+        "        encs = tokenizer.encode_batch(text)         \n",
+        "        ids_full.extend([enc.ids for enc in encs])\n",
+        "    \n",
+        "    return np.array(ids_full)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "p71uH1wrxeEL",
+        "colab_type": "text"
+      },
+      "source": [
+        "Encode the tweets using fast_tokenizer"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "NTog-FZrS09y",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "x = fast_encode(train.text.astype(str), fast_tokenizer, maxlen=512)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "MZ-fwL5dV6KY",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "BATCH_SIZE=64"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "qqqzBlemRIR4",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "y=train['target'].values"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "Q8Q7MWSm019C",
+        "colab_type": "text"
+      },
+      "source": [
+        "Splitting the data into train and test."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "6vpa2zMQ0lW7",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "from sklearn.model_selection import train_test_split\n",
+        "X_train, X_test, y_train, y_test = train_test_split(x,y,test_size=0.1, random_state=42)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "ZebKHPZ9xkSi",
+        "colab_type": "text"
+      },
+      "source": [
+        "Creating dataset for bert model"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "Otfh-nRRT4hj",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "train_dataset = (\n",
+        "    tf.data.Dataset \n",
+        "      .from_tensor_slices((X_train, y_train))\n",
+        "      .repeat()\n",
+        "      .shuffle(2048)\n",
+        "      .batch(BATCH_SIZE)\n",
+        "    .prefetch(tf.data.experimental.AUTOTUNE) \n",
+        ")"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "Pa7p3JLQGvSY",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "test_data = (\n",
+        "    tf.data.Dataset# create dataset\n",
+        "    .from_tensor_slices(X_test) \n",
+        "    .batch(BATCH_SIZE)\n",
+        ")"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "Q-G3vFsvYYE8",
+        "colab_type": "text"
+      },
+      "source": [
+        "# Training"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "DD-srMR8WZ-P",
+        "trusted": true,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "with strategy.scope():\n",
+        "    train_history = model.fit(\n",
+        "      train_dataset,\n",
+        "      steps_per_epoch=150,\n",
+        "      epochs = 10\n",
+        "    )"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "PHO0zLe9Yb_A",
+        "colab_type": "text"
+      },
+      "source": [
+        "# Testing"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "Cgl5EVJL74sV",
+        "colab_type": "text"
+      },
+      "source": [
+        "Let's predict on X_test"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "vXG8Ze4w57YJ",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "predictions = model.predict(X_test)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "iJgQj5ib7_Nz",
+        "colab_type": "text"
+      },
+      "source": [
+        "Flattening predictions from 2d list to 1d list"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "oFBTMA046c6m",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "flattened_predictions = list(chain.from_iterable(predictions))"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "hQLZ1LX26r93",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "for i in range(len(flattened_predictions)):\n",
+        "  if flattened_predictions[i] <= 0.5: \n",
+        "    flattened_predictions[i] = 0\n",
+        "  else: \n",
+        "    flattened_predictions[i] = 1"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "9hyRZd-T7LLM",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "flattened_predictions[:5]"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "HJNcIiVC7uG9",
+        "colab_type": "text"
+      },
+      "source": [
+        "Checking out the accuracy with the predictions that we made on X_test and comparing it with y_test."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "OtzWic9n7hIP",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "from sklearn.metrics import accuracy_score\n",
+        "round(accuracy_score(y_test, flattened_predictions),3)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "jmn02mL8xzBd",
+        "colab_type": "text"
+      },
+      "source": [
+        "## Doing live analysis of twitter's tweets \n",
+        "We have trained the model and it can be used to classify the live tweets we gather from twitter."
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "1sB9FTyUyKR3",
+        "colab_type": "text"
+      },
+      "source": [
+        "Install tweepy\n",
+        "tweepy is the python client for the official Twitter API\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "oPQQa2b1Xi0h",
+        "trusted": false,
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "!pip install tweepy"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "trusted": true,
+        "id": "2MOEvtlkjooK",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "import re \n",
+        "import tweepy \n",
+        "from tweepy import OAuthHandler \n",
+        "from cleantext import clean"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "3BYoFUzczH2e",
+        "colab_type": "text"
+      },
+      "source": [
+        "In order to fetch tweets through Twitter API, one needs to register an App through their twitter account. Follow these steps for the same:\n",
+        "\n",
+        "Open this link 'https://apps.twitter.com/' and click the button: ‘Create New App’\n",
+        "Fill the application details. \n",
+        "You can leave the callback url field empty.\n",
+        "Once the app is created, you will be redirected to the app page.\n",
+        "Open the ‘Keys and Access Tokens’ tab.\n",
+        "Copy ‘Consumer Key’, ‘Consumer Secret’, ‘Access token’ and ‘Access Token Secret’."
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "wuirfdqyh8mq",
+        "colab_type": "text"
+      },
+      "source": [
+        "A function has to be defined to tokenize our tweet so that its ids can be to the model for making prediction. "
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "g_UGghsfexdy",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# convert tweet into tokens.    \n",
+        "def convert_lines(tweet, max_seq_length,tokenizer):\n",
+        "  max_seq_length -=2\n",
+        "  all_tokens = []\n",
+        "\n",
+        "  tokens_a = tokenizer.tokenize(tweet)\n",
+        "  if len(tokens_a)>max_seq_length:\n",
+        "    tokens_a = tokens_a[:max_seq_length]\n",
+        "\n",
+        "  # remove stopwords\n",
+        "  from nltk.corpus import stopwords\n",
+        "  import nltk\n",
+        "  stoplist = stopwords.words('english')\n",
+        "  tokens_b = [word for word in tokens_a if not word in stoplist]\n",
+        "\n",
+        "  one_token = tokenizer.convert_tokens_to_ids([\"[CLS]\"]+tokens_b+[\"[SEP]\"])+[0] * (max_seq_length - len(tokens_b))\n",
+        "  all_tokens.append(one_token)\n",
+        "\n",
+        "  return np.array(all_tokens)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "ijCMhYQ3iTLB",
+        "colab_type": "text"
+      },
+      "source": [
+        "This below function would use our bert model that we trained earlier and also make use of the ids of the clean tokenized tweet to classify it into real or no disaster.\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "L5kFayBzexbj",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "def predict_disaster(tweet): \n",
+        "        \n",
+        "  maxlen = 512\n",
+        "\n",
+        "  tweet2 = text_cleaning(tweet)\n",
+        "\n",
+        "  token_input2 = convert_lines(tweet2,maxlen,tokenizer)\n",
+        "\n",
+        "  seg_input2 = np.zeros((token_input2.shape[0],maxlen))\n",
+        "  mask_input2 = np.ones((token_input2.shape[0],maxlen))\n",
+        "\n",
+        "  hehe = model.predict([token_input2, seg_input2, mask_input2],verbose=1,batch_size=32)\n",
+        "\n",
+        "  if hehe <= 0.5: \n",
+        "    return 'no disaster'\n",
+        "  else: \n",
+        "    return 'real disaster'"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "b-zDFdE1isON",
+        "colab_type": "text"
+      },
+      "source": [
+        "The load_tweets function defined below is responsible for loading the tweets from Twitter using the user's tokens and keys. It returns the original tweets that we load along with their class prediction that we get from predict_disaster function"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "oOSX3wxGdFTa",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "def load_tweets(query, consumer_key, consumer_secret, access_token, access_token_secret,count = 10): \n",
+        "        \n",
+        "  \n",
+        "        # attempt authentication \n",
+        "        try: \n",
+        "            # create OAuthHandler object \n",
+        "            auth_handle = OAuthHandler(consumer_key, consumer_secret) \n",
+        "           \n",
+        "            # set access token and secret \n",
+        "            auth_handle.set_access_token(access_token, access_token_secret) \n",
+        "            \n",
+        "            # create tweepy API object to fetch tweets \n",
+        "            api = tweepy.API(auth_handle) \n",
+        "\n",
+        "        except: \n",
+        "            print(\"Error: Authentication Failed\")\n",
+        "\n",
+        "        # empty list to store parsed tweets \n",
+        "        tweets = [] \n",
+        "  \n",
+        "        try: \n",
+        "            # call twitter api to fetch tweets \n",
+        "            our_tweets  = api.search(q = query, count = count) \n",
+        "  \n",
+        "            # parsing tweets one by one \n",
+        "            for tweet in our_tweets : \n",
+        "\n",
+        "                # empty dictionary to store required params of a tweet \n",
+        "                parsed_tweet = {} \n",
+        "\n",
+        "                # saving text of tweet \n",
+        "                parsed_tweet['text'] = tweet.text \n",
+        "                \n",
+        "                # saving sentiment of tweet \n",
+        "                parsed_tweet['class'] = predict_disaster(tweet.text) \n",
+        "  \n",
+        "                # appending parsed tweet to tweets list \n",
+        "                if tweet.retweet_count > 0: \n",
+        "                    # if tweet has retweets, ensure that it is appended only once \n",
+        "                    if parsed_tweet not in tweets: \n",
+        "                        tweets.append(parsed_tweet) \n",
+        "                else: \n",
+        "                    tweets.append(parsed_tweet) \n",
+        "  \n",
+        "            # return parsed tweets \n",
+        "            return tweets \n",
+        "  \n",
+        "        except tweepy.TweepError as e: \n",
+        "            # print error (if any) \n",
+        "            print(\"Error : \" + str(e)) "
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "xaasEEW8d3vk",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "#  Your keys and tokens from the Twitter Dev Console \n",
+        "consumer_key = 'YOUR consumer_key'\n",
+        "consumer_secret = 'YOUR consumer_secret'\n",
+        "access_token = 'YOUR access_token'\n",
+        "access_token_secret = 'Your access_token_secret'"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "wEdGFzBKdFY-",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# input any query and tweets regarding it would come up. \n",
+        "tweets = load_tweets('crime', consumer_key, consumer_secret, access_token, access_token_secret, 200) "
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "B87r7N3Uke2L",
+        "colab_type": "text"
+      },
+      "source": [
+        "Let's distribute the tweets in 2 variables according to their classes and find out Real Disaster tweets percentage\n",
+        "and No Disaster tweets percentage"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "qAITeZo4dFXj",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "real_d  = [tweet for tweet in tweets if tweet['class'] == 'real disaster']  \n",
+        "print(\"Real Disaster tweets percentage: {} %\".format(round((100*len(real_d )/len(tweets)),2)))\n",
+        "\n",
+        "no_d = [tweet for tweet in tweets if tweet['class'] == 'no disaster'] \n",
+        "print(\"No Disaster tweets percentage: {} %\".format(round((100*len(no_d)/len(tweets)),2)))"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "llMFQuhTdEil",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# printing first 5 positive tweets \n",
+        "print(\"\\n\\n Real Disaster tweets:\") \n",
+        "for tweet in real_d[:10]: \n",
+        "    print(tweet['text']) \n",
+        "\n",
+        "# printing first 5 negative tweets \n",
+        "print(\"\\n\\n No Disaster tweets:\") \n",
+        "for tweet in no_d[:10]: \n",
+        "    print(tweet['text']) "
+      ],
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
